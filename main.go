@@ -16,6 +16,8 @@ import (
 	google "golang.org/x/oauth2/google"
 	compute "google.golang.org/api/compute/v1"
 	container "google.golang.org/api/container/v1"
+	restclient "k8s.io/kubernetes/pkg/client/restclient"
+  kubeclient "k8s.io/kubernetes/pkg/client/unversioned"
 )
 
 var (
@@ -27,7 +29,7 @@ func init() {
 }
 
 type Config struct {
-	PrometheusConfigFile string `yaml:"prometheus_config"`
+	PrometheusConfigMap	 string	`yaml:"prometheus_config_map"`
 	CertificateStoreDir  string `yaml:"certificate_store"`
 	PrometheusEndpoint   string `yaml:"prometheus_endpoint"`
 	GCPProject           string `yaml:"gcp_project"`
@@ -77,8 +79,8 @@ func LoadConfig(filename string) Config {
 	}
 
 	// Defaults
-	if cfg.PrometheusConfigFile == "" {
-		cfg.PrometheusConfigFile = "/etc/prometheus/prometheus.yml"
+	if cfg.PrometheusConfigMap == "" {
+		cfg.PrometheusConfigMap = "/etc/prometheus/prometheus.yml"
 	}
 
 	if cfg.CertificateStoreDir == "" {
@@ -121,6 +123,35 @@ func main() {
 	}
 
 	oldClusters := []container.Cluster{}
+
+	// Kubernetes Gubbins
+	confDir := "/var/run/secrets/kubernetes.io/serviceaccount"
+  caData, err := ioutil.ReadFile(confDir + "/ca.crt")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  token, err := ioutil.ReadFile(confDir + "/token")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  namespace, err := ioutil.ReadFile(confDir + "/namespace")
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  // Kube Client
+  config := &restclient.Config{
+		Host:            "https://kubernetes",
+    BearerToken:     string(token),
+    TLSClientConfig: restclient.TLSClientConfig{CAData: caData},
+  }
+
+  c, err := kubeclient.New(config)
+  if err != nil {
+		fmt.Println(err)
+  }
 	hasChanged := false
 
 	ticker := time.NewTicker(time.Duration(cfg.PollTime) * time.Second)
@@ -266,13 +297,12 @@ func main() {
 			}
 
 			cfgp := PrometheusConfig{}
-
-			d, err := ioutil.ReadFile(cfg.PrometheusConfigFile)
+			cfgMap, err := c.ConfigMaps(string(namespace)).Get("prometheus")
 			if err != nil {
-				log.Fatal(err)
+				fmt.Println(err)
 			}
 
-			err = yaml.Unmarshal(d, &cfgp)
+			err = yaml.Unmarshal([]byte(cfgMap.Data["prometheus.yaml"]), &cfgp)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -286,12 +316,14 @@ func main() {
 
 			cfgp.ScrapeConfigs = newScrapeConfigs
 
-			d, err = yaml.Marshal(&cfgp)
+			d, err := yaml.Marshal(&cfgp)
 			if err != nil {
 				log.Fatal(err)
 			}
 
-			err = ioutil.WriteFile(cfg.PrometheusConfigFile, d, 0644)
+			cfgMap.Data["prometheus.yaml"] = string(d)
+
+			_, err = c.ConfigMaps(string(namespace)).Update(cfgMap)
 			if err != nil {
 				log.Fatal(err)
 			}
