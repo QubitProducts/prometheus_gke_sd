@@ -1,0 +1,5 @@
+prometheus_config: "/etc/prometheus/prometheus.yml"
+certificate_store: "/etc/prometheus/credentials"
+prometheus_endpoint: "http://localhost:9090"
+gcp_project: ""
+poll_time: 30
