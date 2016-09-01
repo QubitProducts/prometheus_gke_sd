@@ -16,6 +16,12 @@ import (
 	google "golang.org/x/oauth2/google"
 	compute "google.golang.org/api/compute/v1"
 	container "google.golang.org/api/container/v1"
+	kubeapi "k8s.io/kubernetes/pkg/api"
+	restclient "k8s.io/kubernetes/pkg/client/restclient"
+	kubeclient "k8s.io/kubernetes/pkg/client/unversioned"
+	labels "k8s.io/kubernetes/pkg/labels"
+	kubeselection "k8s.io/kubernetes/pkg/selection"
+	kubesets "k8s.io/kubernetes/pkg/util/sets"
 )
 
 var (
@@ -27,9 +33,10 @@ func init() {
 }
 
 type Config struct {
-	PrometheusConfigFile string `yaml:"prometheus_config"`
+	PrometheusConfigMap  string `yaml:"prometheus_config_map"`
+	CertificateConfigMap string `yaml:"certificate_config_map"`
 	CertificateStoreDir  string `yaml:"certificate_store"`
-	PrometheusEndpoint   string `yaml:"prometheus_endpoint"`
+	PrometheusPodLabel   string `yaml:"prometheus_label"`
 	GCPProject           string `yaml:"gcp_project"`
 	PollTime             int64  `yaml:"poll_time"`
 }
@@ -77,16 +84,20 @@ func LoadConfig(filename string) Config {
 	}
 
 	// Defaults
-	if cfg.PrometheusConfigFile == "" {
-		cfg.PrometheusConfigFile = "/etc/prometheus/prometheus.yml"
+	if cfg.PrometheusConfigMap == "" {
+		cfg.PrometheusConfigMap = "prometheus"
+	}
+
+	if cfg.PrometheusConfigMap == "" {
+		cfg.PrometheusConfigMap = "gke-discoverer-certs"
 	}
 
 	if cfg.CertificateStoreDir == "" {
-		cfg.CertificateStoreDir = "/etc/prometheus/kube_sd_certs"
+		cfg.CertificateStoreDir = "/etc/prometheus/gke-discoverer-certs"
 	}
 
-	if cfg.PrometheusEndpoint == "" {
-		cfg.PrometheusEndpoint = "http://localhost:9090"
+	if cfg.PrometheusPodLabel == "" {
+		cfg.PrometheusPodLabel = "prometheus"
 	}
 
 	if cfg.PollTime == 0 {
@@ -121,6 +132,35 @@ func main() {
 	}
 
 	oldClusters := []container.Cluster{}
+
+	// Kubernetes Gubbins
+	confDir := "/var/run/secrets/kubernetes.io/serviceaccount"
+	caData, err := ioutil.ReadFile(confDir + "/ca.crt")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	token, err := ioutil.ReadFile(confDir + "/token")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	namespace, err := ioutil.ReadFile(confDir + "/namespace")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Kube Client
+	config := &restclient.Config{
+		Host:            "https://kubernetes",
+		BearerToken:     string(token),
+		TLSClientConfig: restclient.TLSClientConfig{CAData: caData},
+	}
+
+	c, err := kubeclient.New(config)
+	if err != nil {
+		fmt.Println(err)
+	}
 	hasChanged := false
 
 	ticker := time.NewTicker(time.Duration(cfg.PollTime) * time.Second)
@@ -205,9 +245,14 @@ func main() {
 			newScrapeConfigs := []ScrapeConfig{}
 
 			for _, cluster := range oldClusters {
-				CAFile := fmt.Sprintf("%v/%v-ca.pem", cfg.CertificateStoreDir, cluster.Name)
-				CertFile := fmt.Sprintf("%v/%v-cert.pem", cfg.CertificateStoreDir, cluster.Name)
-				KeyFile := fmt.Sprintf("%v/%v-key.pem", cfg.CertificateStoreDir, cluster.Name)
+				cfgMap, err := c.ConfigMaps(string(namespace)).Get(cfg.CertificateConfigMap)
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				CAFile := fmt.Sprintf("%v-ca.pem", cluster.Name)
+				CertFile := fmt.Sprintf("%v-cert.pem", cluster.Name)
+				KeyFile := fmt.Sprintf("%v-key.pem", cluster.Name)
 
 				decodedCA, err := base64.StdEncoding.DecodeString(cluster.MasterAuth.ClusterCaCertificate)
 				if err != nil {
@@ -222,17 +267,11 @@ func main() {
 					log.Fatal(err)
 				}
 
-				err = ioutil.WriteFile(CAFile, decodedCA, 0644)
-				if err != nil {
-					log.Fatal(err)
-				}
+				cfgMap.Data[CAFile] = string(decodedCA)
+				cfgMap.Data[CertFile] = string(decodedCert)
+				cfgMap.Data[KeyFile] = string(decodedKey)
 
-				err = ioutil.WriteFile(CertFile, decodedCert, 0644)
-				if err != nil {
-					log.Fatal(err)
-				}
-
-				err = ioutil.WriteFile(KeyFile, decodedKey, 0644)
+				_, err = c.ConfigMaps(string(namespace)).Update(cfgMap)
 				if err != nil {
 					log.Fatal(err)
 				}
@@ -251,10 +290,15 @@ func main() {
 								},
 								Role:      r,
 								InCluster: false,
+								/*
+									This has to be the path where prometheus will expect to find the certs
+									At the moment, this is the only reason we have to pass in the CertificateStoreDir variable
+									Potentially, this could come from the prometheus deployment in kube (by looking up where we're mounting the certs)
+								*/
 								TLSConfig: TLSConfig{
-									CAFile:   CAFile,
-									CertFile: CertFile,
-									KeyFile:  KeyFile,
+									CAFile:   fmt.Sprintf("%v/%v", cfg.CertificateStoreDir, CAFile),
+									CertFile: fmt.Sprintf("%v/%v", cfg.CertificateStoreDir, CertFile),
+									KeyFile:  fmt.Sprintf("%v/%v", cfg.CertificateStoreDir, KeyFile),
 								},
 							},
 						},
@@ -266,13 +310,12 @@ func main() {
 			}
 
 			cfgp := PrometheusConfig{}
-
-			d, err := ioutil.ReadFile(cfg.PrometheusConfigFile)
+			cfgMap, err := c.ConfigMaps(string(namespace)).Get(cfg.PrometheusConfigMap)
 			if err != nil {
-				log.Fatal(err)
+				fmt.Println(err)
 			}
 
-			err = yaml.Unmarshal(d, &cfgp)
+			err = yaml.Unmarshal([]byte(cfgMap.Data["prometheus.yml"]), &cfgp)
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -286,21 +329,55 @@ func main() {
 
 			cfgp.ScrapeConfigs = newScrapeConfigs
 
-			d, err = yaml.Marshal(&cfgp)
+			d, err := yaml.Marshal(&cfgp)
 			if err != nil {
 				log.Fatal(err)
 			}
 
-			err = ioutil.WriteFile(cfg.PrometheusConfigFile, d, 0644)
+			cfgMap.Data["prometheus.yml"] = string(d)
+
+			_, err = c.ConfigMaps(string(namespace)).Update(cfgMap)
 			if err != nil {
 				log.Fatal(err)
 			}
 
 			fmt.Println("Reloading Prometheus Config")
-			// Reload Prometheus Config
-			_, err = http.Post(cfg.PrometheusEndpoint+"/-/reload", "text/plain", bytes.NewBufferString(""))
+
+			req, err := labels.NewRequirement("app", kubeselection.Equals, kubesets.NewString(cfg.PrometheusPodLabel))
 			if err != nil {
 				log.Fatal(err)
+			}
+
+			fmt.Println("Creating Requirement: ", req.String())
+
+			ls := labels.NewSelector()
+			ls = ls.Add(*req)
+
+			lo := kubeapi.ListOptions{
+				LabelSelector: ls,
+			}
+
+			podList, err := c.Pods(string(namespace)).List(lo)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			for _, pod := range podList.Items {
+				if pod.Status.PodIP == "" {
+					// This prometheus instance hasnt started yet
+					continue
+				}
+				fmt.Println("Discovered Prometheus instance: ", pod.Status.PodIP)
+				resp, err = http.Post("http://"+pod.Status.PodIP+":9090/-/reload", "text/plain", bytes.NewBufferString(""))
+				if err != nil {
+					log.Fatal(err)
+				}
+				body, err := ioutil.ReadAll(resp.Body)
+				if err != nil {
+					log.Fatal(err)
+				}
+				fmt.Println(body)
+				resp.Body.Close()
 			}
 		}
 	}
