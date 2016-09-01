@@ -19,9 +19,9 @@ import (
 	kubeapi "k8s.io/kubernetes/pkg/api"
 	restclient "k8s.io/kubernetes/pkg/client/restclient"
 	kubeclient "k8s.io/kubernetes/pkg/client/unversioned"
-	kubesets	"k8s.io/kubernetes/pkg/util/sets"
-	labels	"k8s.io/kubernetes/pkg/labels"
+	labels "k8s.io/kubernetes/pkg/labels"
 	kubeselection "k8s.io/kubernetes/pkg/selection"
+	kubesets "k8s.io/kubernetes/pkg/util/sets"
 )
 
 var (
@@ -342,7 +342,6 @@ func main() {
 			}
 
 			fmt.Println("Reloading Prometheus Config")
-
 
 			req, err := labels.NewRequirement("app", kubeselection.Equals, kubesets.NewString(cfg.PrometheusPodLabel))
 			if err != nil {
