@@ -38,6 +38,15 @@ func GetRoles() map[string][]RelabelConfig {
 				Action: "labelmap",
 				Regex:  "__meta_kubernetes_node_label_(.+)",
 			},
+			RelabelConfig{
+				SourceLabels: []string {
+					"__address__",
+				},
+				Action: "replace",
+				Regex: "([\\d\\.]+):([\\d]+)",
+				TargetLabel: "__address__",
+				Replacement: "$1:10255",
+			},
 		},
 		"endpoint": []RelabelConfig{
 			RelabelConfig{
