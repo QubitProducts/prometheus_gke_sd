@@ -368,7 +368,7 @@ func main() {
 					continue
 				}
 				fmt.Println("Discovered Prometheus instance: ", pod.Status.PodIP)
-				resp, err = http.Post("http://"+pod.Status.PodIP+":9090/-/reload", "text/plain", bytes.NewBufferString(""))
+				resp, err := http.Post("http://"+pod.Status.PodIP+":9090/-/reload", "text/plain", bytes.NewBufferString(""))
 				if err != nil {
 					log.Fatal(err)
 				}
