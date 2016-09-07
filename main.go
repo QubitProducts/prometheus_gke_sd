@@ -335,7 +335,7 @@ func main() {
 
 			// Certs
 			fmt.Println("Creating Cert map", cfgMapCerts)
-			//			time.Sleep(time.Second * 30) // Kubernetes Update Sync period
+			time.Sleep(time.Second * 30) // Kubernetes Update Sync period
 			_, err = c.ConfigMaps(string(namespace)).Create(cfgMapCerts)
 			if err != nil {
 				fmt.Println(err)
