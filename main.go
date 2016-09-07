@@ -35,8 +35,8 @@ func init() {
 type Config struct {
 	WritePrometheusConfigMap string `yaml:"write_prometheus_config_map"`
 	ReadPrometheusConfigMap  string `yaml:"read_prometheus_config_map"`
-	CertificateStoreDir			 string `yaml:"certificate_store_dir"`
-	CertificateConfigMap		 string `yaml:"certificate_config_map"`
+	CertificateStoreDir      string `yaml:"certificate_store_dir"`
+	CertificateConfigMap     string `yaml:"certificate_config_map"`
 	PrometheusPodLabel       string `yaml:"prometheus_label"`
 	GCPProject               string `yaml:"gcp_project"`
 	PollTime                 int64  `yaml:"poll_time"`
@@ -88,7 +88,7 @@ func LoadConfig(filename string) Config {
 	if cfg.ReadPrometheusConfigMap == "" {
 		cfg.ReadPrometheusConfigMap = "prometheus"
 	}
-  if cfg.WritePrometheusConfigMap == "" {
+	if cfg.WritePrometheusConfigMap == "" {
 		cfg.WritePrometheusConfigMap = "prometheus-dynamic"
 	}
 
@@ -247,7 +247,6 @@ func main() {
 				Data: map[string]string{},
 			}
 
-
 			for _, cluster := range oldClusters {
 				CAFile := fmt.Sprintf("%v-ca.pem", cluster.Name)
 				CertFile := fmt.Sprintf("%v-cert.pem", cluster.Name)
@@ -331,21 +330,21 @@ func main() {
 			// Prometheus
 			cfgMap.Data["prometheus.yml"] = string(d)
 			cfgMap.ObjectMeta.Name = cfg.WritePrometheusConfigMap
-      cfgMap.ResourceVersion = ""
+			cfgMap.ResourceVersion = ""
 			cfgMap.SelfLink = ""
 
 			// Certs
 			fmt.Println("Creating Cert map", cfgMapCerts)
-//			time.Sleep(time.Second * 30) // Kubernetes Update Sync period
+			//			time.Sleep(time.Second * 30) // Kubernetes Update Sync period
 			_, err = c.ConfigMaps(string(namespace)).Create(cfgMapCerts)
-      if err != nil {
+			if err != nil {
 				fmt.Println(err)
 				_, erri := c.ConfigMaps(string(namespace)).Update(cfgMapCerts)
 				if erri != nil {
 					fmt.Println(err)
 					log.Fatal(erri)
 				}
-      }
+			}
 
 			_, err = c.ConfigMaps(string(namespace)).Create(cfgMap)
 			if err != nil {
