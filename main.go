@@ -33,12 +33,13 @@ func init() {
 }
 
 type Config struct {
-	PrometheusConfigMap  string `yaml:"prometheus_config_map"`
-	CertificateConfigMap string `yaml:"certificate_config_map"`
-	CertificateStoreDir  string `yaml:"certificate_store"`
-	PrometheusPodLabel   string `yaml:"prometheus_label"`
-	GCPProject           string `yaml:"gcp_project"`
-	PollTime             int64  `yaml:"poll_time"`
+	WritePrometheusConfigMap string `yaml:"write_prometheus_config_map"`
+	ReadPrometheusConfigMap  string `yaml:"read_prometheus_config_map"`
+	CertificateStoreDir			 string `yaml:"certificate_store_dir"`
+	CertificateConfigMap		 string `yaml:"certificate_config_map"`
+	PrometheusPodLabel       string `yaml:"prometheus_label"`
+	GCPProject               string `yaml:"gcp_project"`
+	PollTime                 int64  `yaml:"poll_time"`
 }
 
 type PrometheusConfig struct {
@@ -84,16 +85,11 @@ func LoadConfig(filename string) Config {
 	}
 
 	// Defaults
-	if cfg.PrometheusConfigMap == "" {
-		cfg.PrometheusConfigMap = "prometheus"
+	if cfg.ReadPrometheusConfigMap == "" {
+		cfg.ReadPrometheusConfigMap = "prometheus"
 	}
-
-	if cfg.PrometheusConfigMap == "" {
-		cfg.PrometheusConfigMap = "gke-discoverer-certs"
-	}
-
-	if cfg.CertificateStoreDir == "" {
-		cfg.CertificateStoreDir = "/etc/prometheus/gke-discoverer-certs"
+  if cfg.WritePrometheusConfigMap == "" {
+		cfg.WritePrometheusConfigMap = "prometheus-dynamic"
 	}
 
 	if cfg.PrometheusPodLabel == "" {
@@ -244,12 +240,15 @@ func main() {
 
 			newScrapeConfigs := []ScrapeConfig{}
 
-			for _, cluster := range oldClusters {
-				cfgMap, err := c.ConfigMaps(string(namespace)).Get(cfg.CertificateConfigMap)
-				if err != nil {
-					log.Fatal(err)
-				}
+			cfgMapCerts := &kubeapi.ConfigMap{
+				ObjectMeta: kubeapi.ObjectMeta{
+					Name: cfg.CertificateConfigMap,
+				},
+				Data: map[string]string{},
+			}
 
+
+			for _, cluster := range oldClusters {
 				CAFile := fmt.Sprintf("%v-ca.pem", cluster.Name)
 				CertFile := fmt.Sprintf("%v-cert.pem", cluster.Name)
 				KeyFile := fmt.Sprintf("%v-key.pem", cluster.Name)
@@ -267,14 +266,9 @@ func main() {
 					log.Fatal(err)
 				}
 
-				cfgMap.Data[CAFile] = string(decodedCA)
-				cfgMap.Data[CertFile] = string(decodedCert)
-				cfgMap.Data[KeyFile] = string(decodedKey)
-
-				_, err = c.ConfigMaps(string(namespace)).Update(cfgMap)
-				if err != nil {
-					log.Fatal(err)
-				}
+				cfgMapCerts.Data[CAFile] = string(decodedCA)
+				cfgMapCerts.Data[CertFile] = string(decodedCert)
+				cfgMapCerts.Data[KeyFile] = string(decodedKey)
 
 				for r, c := range GetRoles() {
 					scc := ScrapeConfig{
@@ -310,7 +304,7 @@ func main() {
 			}
 
 			cfgp := PrometheusConfig{}
-			cfgMap, err := c.ConfigMaps(string(namespace)).Get(cfg.PrometheusConfigMap)
+			cfgMap, err := c.ConfigMaps(string(namespace)).Get(cfg.ReadPrometheusConfigMap)
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -334,15 +328,37 @@ func main() {
 				log.Fatal(err)
 			}
 
+			// Prometheus
 			cfgMap.Data["prometheus.yml"] = string(d)
+			cfgMap.ObjectMeta.Name = cfg.WritePrometheusConfigMap
+      cfgMap.ResourceVersion = ""
+			cfgMap.SelfLink = ""
 
-			_, err = c.ConfigMaps(string(namespace)).Update(cfgMap)
+			// Certs
+			fmt.Println("Creating Cert map", cfgMapCerts)
+//			time.Sleep(time.Second * 30) // Kubernetes Update Sync period
+			_, err = c.ConfigMaps(string(namespace)).Create(cfgMapCerts)
+      if err != nil {
+				fmt.Println(err)
+				_, erri := c.ConfigMaps(string(namespace)).Update(cfgMapCerts)
+				if erri != nil {
+					fmt.Println(err)
+					log.Fatal(erri)
+				}
+      }
+
+			_, err = c.ConfigMaps(string(namespace)).Create(cfgMap)
 			if err != nil {
-				log.Fatal(err)
+				// Try to create it.
+				fmt.Println(err)
+				_, erri := c.ConfigMaps(string(namespace)).Update(cfgMap)
+				if erri != nil {
+					fmt.Println(err)
+					log.Fatal(erri)
+				}
 			}
 
 			fmt.Println("Reloading Prometheus Config")
-
 			req, err := labels.NewRequirement("app", kubeselection.Equals, kubesets.NewString(cfg.PrometheusPodLabel))
 			if err != nil {
 				log.Fatal(err)
