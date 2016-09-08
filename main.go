@@ -110,6 +110,7 @@ func LoadConfig(filename string) Config {
 func main() {
 	flag.Parse()
 	cfg := LoadConfig(configFile)
+	fmt.Println(cfg)
 
 	// Create google gubbins.
 	client, err := google.DefaultClient(context.TODO(), container.CloudPlatformScope, compute.ComputeReadonlyScope)
@@ -328,10 +329,12 @@ func main() {
 			}
 
 			// Prometheus
-			cfgMap.Data["prometheus.yml"] = string(d)
-			cfgMap.ObjectMeta.Name = cfg.WritePrometheusConfigMap
-			cfgMap.ResourceVersion = ""
-			cfgMap.SelfLink = ""
+			cfgMap = &kubeapi.ConfigMap{
+				ObjectMeta: kubeapi.ObjectMeta{
+					Name: cfg.WritePrometheusConfigMap,
+				},
+				Data: map[string]string{"prometheus.yml": string(d)},
+			}
 
 			// Certs
 			fmt.Println("Creating Cert map", cfgMapCerts)
@@ -348,7 +351,6 @@ func main() {
 
 			_, err = c.ConfigMaps(string(namespace)).Create(cfgMap)
 			if err != nil {
-				// Try to create it.
 				fmt.Println(err)
 				_, erri := c.ConfigMaps(string(namespace)).Update(cfgMap)
 				if erri != nil {
