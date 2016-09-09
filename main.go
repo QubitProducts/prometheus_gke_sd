@@ -1,45 +1,57 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"time"
 
+	log "github.com/golang/glog"
+	"github.com/pkg/errors"
 	"golang.org/x/net/context"
+	"golang.org/x/net/context/ctxhttp"
+
+	"github.com/fsnotify/fsnotify"
 	"gopkg.in/yaml.v2"
 
 	google "golang.org/x/oauth2/google"
 	compute "google.golang.org/api/compute/v1"
 	container "google.golang.org/api/container/v1"
-	kubeapi "k8s.io/kubernetes/pkg/api"
-	restclient "k8s.io/kubernetes/pkg/client/restclient"
-	kubeclient "k8s.io/kubernetes/pkg/client/unversioned"
-	labels "k8s.io/kubernetes/pkg/labels"
-	kubeselection "k8s.io/kubernetes/pkg/selection"
-	kubesets "k8s.io/kubernetes/pkg/util/sets"
 )
 
 var (
-	configFile = "/etc/gke-discoverer.yml"
+	configInputFile  = "/etc/gke-input.yml"
+	configOutputFile = "/etc/gke-output.yml"
+
+	prometheusAddress = "http://prometheus:9090"
+
+	certOutDir       = "/etc/gke-certs"
+	certReferenceDir = "/etc/gke-certs"
+
+	gcpProject   = ""
+	pollInterval = time.Second * 10
+)
+
+const (
+	debounceDuration = time.Second * 5
+
+	reloadInterval = time.Second
+	reloadBackoff  = 1.1
 )
 
 func init() {
-	flag.StringVar(&configFile, "config", configFile, "config file to use")
-}
+	flag.StringVar(&configInputFile, "prometheus.config-input", configInputFile, "Prometheus config file to augment with GKE clusters")
+	flag.StringVar(&configOutputFile, "prometheus.config-output", configOutputFile, "Location to write augmented prometheus config file")
 
-type Config struct {
-	WritePrometheusConfigMap string `yaml:"write_prometheus_config_map"`
-	ReadPrometheusConfigMap  string `yaml:"read_prometheus_config_map"`
-	CertificateStoreDir      string `yaml:"certificate_store_dir"`
-	CertificateConfigMap     string `yaml:"certificate_config_map"`
-	PrometheusPodLabel       string `yaml:"prometheus_label"`
-	GCPProject               string `yaml:"gcp_project"`
-	PollTime                 int64  `yaml:"poll_time"`
+	flag.StringVar(&prometheusAddress, "prometheus.address", prometheusAddress, "Address of Prometheus server to reload")
+
+	flag.StringVar(&certOutDir, "prometheus.cert.output-path", certOutDir, "Directory to write GKE certificates to")
+	flag.StringVar(&certReferenceDir, "prometheus.cert.reference-path", certReferenceDir, "Path in prometheus config to reference GKE certificates")
+
+	flag.StringVar(&gcpProject, "gcp.project", "", "GCP project to discover clusters in")
+	flag.DurationVar(&pollInterval, "poll-interval", pollInterval, "Interval to poll for new GKE clusters at")
 }
 
 type PrometheusConfig struct {
@@ -72,330 +84,338 @@ type ScrapeConfig struct {
 	XXX                 map[string]interface{} `yaml:",inline"`
 }
 
-func LoadConfig(filename string) Config {
-	cfg := Config{}
-	d, err := ioutil.ReadFile(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = yaml.Unmarshal(d, &cfg)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Defaults
-	if cfg.ReadPrometheusConfigMap == "" {
-		cfg.ReadPrometheusConfigMap = "prometheus"
-	}
-	if cfg.WritePrometheusConfigMap == "" {
-		cfg.WritePrometheusConfigMap = "prometheus-dynamic"
-	}
-
-	if cfg.PrometheusPodLabel == "" {
-		cfg.PrometheusPodLabel = "prometheus"
-	}
-
-	if cfg.PollTime == 0 {
-		cfg.PollTime = 30
-	}
-
-	if cfg.GCPProject == "" {
+func main() {
+	flag.Parse()
+	if gcpProject == "" {
 		log.Fatal("Please supply a GCP Project")
 	}
 
-	return cfg
+	ctx := context.Background()
+
+	log.V(2).Infof("Checking config every %v or on changes to %v", pollInterval, configInputFile)
+	updateChan, err := watchAndTick(ctx, configInputFile, pollInterval)
+	if err != nil {
+		log.Fatalf("Failed to watch input file: %v", err)
+	}
+
+	currentClusters := []*container.Cluster{}
+
+	loop := func(force bool) error {
+		ctx, cancel := context.WithTimeout(ctx, pollInterval)
+		defer cancel()
+
+		newClusters, err := findClusters(ctx, gcpProject)
+		if err != nil {
+			return errors.Wrap(err, "could not find clusters")
+		}
+
+		if !force {
+			changes := !clusterListEqual(currentClusters, newClusters)
+			if !changes {
+				return nil
+			}
+			log.V(2).Infof("Change in clusters composition")
+		} else {
+			log.V(2).Infof("Forcing reload")
+		}
+
+		if log.V(2) {
+			log.Infof("Clusters:")
+			for _, c := range newClusters {
+				log.Info(c.Name)
+			}
+		}
+
+		err = writeClusterCerts(certOutDir, newClusters)
+		if err != nil {
+			return errors.Wrap(err, "could not update cluster certs")
+		}
+		log.V(2).Infof("Wrote certs to %v", certOutDir)
+
+		newConfig, err := generateConfig(configInputFile, certReferenceDir, newClusters)
+		if err != nil {
+			return errors.Wrap(err, "could not generate config")
+		}
+		err = ioutil.WriteFile(configOutputFile, newConfig, 0600)
+		if err != nil {
+			return errors.Wrap(err, "could not write config")
+		}
+		log.V(2).Infof("Wrote config to %v", configOutputFile)
+
+		err = reloadPrometheus(ctx, prometheusAddress)
+		if err != nil {
+			return errors.Wrap(err, "could not reload prometheus")
+		}
+
+		// Only set new clusters after a successful reload
+		currentClusters = newClusters
+		return nil
+	}
+
+	for force := range updateChan {
+		err := loop(force)
+		if err != nil {
+			log.Errorf("Config check/update loop failed: %v", err)
+		}
+	}
 }
 
-func main() {
-	flag.Parse()
-	cfg := LoadConfig(configFile)
-	fmt.Println(cfg)
+func reloadPrometheus(ctx context.Context, prometheusLocation string) error {
+	url := fmt.Sprintf("%v/-/reload", prometheusLocation)
+	backoff := reloadInterval
+	for i := 0; ctx.Err() == nil; i++ {
+		log.V(2).Infof("Reloading prometheus")
+		_, err := ctxhttp.Post(ctx, http.DefaultClient, url, "", nil)
+		if err == nil {
+			log.Infof("Reloaded prometheus")
+			return nil
+		}
+		log.Errorf("Failed to reload prometheus: %v", err)
 
-	// Create google gubbins.
-	client, err := google.DefaultClient(context.TODO(), container.CloudPlatformScope, compute.ComputeReadonlyScope)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	containerSvc, err := container.New(client)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	computeSvc, err := compute.New(client)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	oldClusters := []container.Cluster{}
-
-	// Kubernetes Gubbins
-	confDir := "/var/run/secrets/kubernetes.io/serviceaccount"
-	caData, err := ioutil.ReadFile(confDir + "/ca.crt")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	token, err := ioutil.ReadFile(confDir + "/token")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	namespace, err := ioutil.ReadFile(confDir + "/namespace")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// Kube Client
-	config := &restclient.Config{
-		Host:            "https://kubernetes",
-		BearerToken:     string(token),
-		TLSClientConfig: restclient.TLSClientConfig{CAData: caData},
-	}
-
-	c, err := kubeclient.New(config)
-	if err != nil {
-		fmt.Println(err)
-	}
-	hasChanged := false
-
-	ticker := time.NewTicker(time.Duration(cfg.PollTime) * time.Second)
-
-	for {
+		log.V(2).Infof("Backing off for %v", backoff)
 		select {
-		case <-ticker.C:
-			hasChanged = false
-			res, err := computeSvc.Zones.List(cfg.GCPProject).Do()
-			if err != nil {
-				log.Fatal(err)
-			}
+		case <-time.After(backoff):
+		case <-ctx.Done():
+		}
+		backoff = time.Duration(float64(backoff) * reloadBackoff)
+	}
+	return ctx.Err()
+}
 
-			// Check every zone.
-			newClusterList := []container.Cluster{}
-			for _, z := range res.Items {
+func writeClusterCerts(outDir string, clusters []*container.Cluster) error {
+	for _, cluster := range clusters {
+		err := writeCert(outDir, cluster.Name, "ca", cluster.MasterAuth.ClusterCaCertificate)
+		if err != nil {
+			return errors.Wrap(err, "could not write ca cert")
+		}
+		err = writeCert(outDir, cluster.Name, "cert", cluster.MasterAuth.ClientCertificate)
+		if err != nil {
+			return errors.Wrap(err, "could not write client cert")
+		}
+		err = writeCert(outDir, cluster.Name, "key", cluster.MasterAuth.ClientKey)
+		if err != nil {
+			return errors.Wrap(err, "could not write client key")
+		}
+	}
+	return nil
+}
 
-				fmt.Println("Zone : ", z.Name)
-				res, err := containerSvc.Projects.Zones.Clusters.List(cfg.GCPProject, z.Name).Do()
-				if err != nil {
-					log.Fatal(err)
-				}
-				for _, c := range res.Clusters {
-					newClusterList = append(newClusterList, *c)
-				}
-			}
+func writeCert(outDir, clusterName, certType, b64Cert string) error {
+	cert, err := base64.StdEncoding.DecodeString(b64Cert)
+	if err != nil {
+		return errors.Wrap(err, "could not b64 decode cert")
+	}
+	fname := fmt.Sprintf("%v/%v-%v.pem", outDir, clusterName, certType)
+	err = ioutil.WriteFile(fname, cert, 0600)
+	return errors.Wrap(err, "could not write file")
+}
 
-			if len(oldClusters) == 0 {
-				oldClusters = newClusterList
-				hasChanged = true
-			}
+func generateConfig(inputConfigFilename, certDir string, clusters []*container.Cluster) ([]byte, error) {
+	inputConfig, err := readInputConfig(inputConfigFilename)
+	if err != nil {
+		return []byte{}, errors.Wrapf(err, "could not load input config at %v", inputConfigFilename)
+	}
 
-			indexesToRemove := []int{}
+	scrapeConfigs := []ScrapeConfig{}
+	for _, c := range clusters {
+		scrapeConfigs = append(scrapeConfigs, clusterToScrapeConfigs(certDir, c)...)
+	}
 
-			// What entries are in the new cluster, but not in the old? (I.e New Entries)
-			for _, cluster := range newClusterList {
-				hasFound := false
-				for _, ocluster := range oldClusters {
-					if cluster.Name == ocluster.Name {
-						hasFound = true
-					}
-				}
-				if !hasFound {
-					oldClusters = append(oldClusters, cluster)
-					hasChanged = true
-				}
-			}
+	inputConfig.ScrapeConfigs = append(inputConfig.ScrapeConfigs, scrapeConfigs...)
 
-			// What needs to be cleaned up (i.e Clusters that have been deleted)
-			for i, ocluster := range oldClusters {
-				hasFound := false
-				for _, cluster := range newClusterList {
-					if cluster.Name == ocluster.Name {
-						hasFound = true
-					}
-				}
+	data, err := yaml.Marshal(inputConfig)
+	return data, errors.Wrap(err, "could not marshal config")
+}
 
-				if !hasFound {
-					indexesToRemove = append(indexesToRemove, i)
-					hasChanged = true
-				}
-			}
-			// Remove old entries
-			for _, i := range indexesToRemove {
-				oldClusters = oldClusters[:i+copy(oldClusters[i:], oldClusters[i+1:])]
-			}
+func clusterToScrapeConfigs(certDir string, cluster *container.Cluster) []ScrapeConfig {
+	configs := []ScrapeConfig{}
 
-			if !hasChanged {
-				fmt.Println("No Difference in config")
-				break
-			}
-			fmt.Println("Detected Changed in Config:", len(oldClusters), len(newClusterList))
-			fmt.Println("Old Clusters:")
-			for _, c := range oldClusters {
-				fmt.Println(c.Name)
-			}
-			fmt.Println("New Clusters:")
-			for _, c := range newClusterList {
-				fmt.Println(c.Name)
-			}
-
-			newScrapeConfigs := []ScrapeConfig{}
-
-			cfgMapCerts := &kubeapi.ConfigMap{
-				ObjectMeta: kubeapi.ObjectMeta{
-					Name: cfg.CertificateConfigMap,
+	for r, c := range GetRoles() {
+		configs = append(configs, ScrapeConfig{
+			JobName: fmt.Sprintf("kubernetes_%v_%v", cluster.Name, r),
+			BasicAuth: BasicAuth{
+				Username: cluster.MasterAuth.Username,
+				Password: cluster.MasterAuth.Password,
+			},
+			KubernetesSDConfigs: []KubeSDConfig{
+				KubeSDConfig{
+					APIServers: []string{
+						"https://" + cluster.Endpoint,
+					},
+					Role:      r,
+					InCluster: false,
+					TLSConfig: TLSConfig{
+						CAFile:   fmt.Sprintf("%v/%v-ca.pem", certDir, cluster.Name),
+						CertFile: fmt.Sprintf("%v/%v-cert.pem", certDir, cluster.Name),
+						KeyFile:  fmt.Sprintf("%v/%v-key.pem", certDir, cluster.Name),
+					},
 				},
-				Data: map[string]string{},
+			},
+			RelabelConfigs: c,
+		})
+	}
+	return configs
+}
+
+func readInputConfig(inputConfigFilename string) (PrometheusConfig, error) {
+	data, err := ioutil.ReadFile(inputConfigFilename)
+	if err != nil {
+		return PrometheusConfig{}, errors.Wrap(err, "could not read input config")
+	}
+
+	config := PrometheusConfig{}
+	err = yaml.Unmarshal(data, &config)
+	return config, errors.Wrap(err, "could not parse input config")
+}
+
+// Returns a channel that will is a union of time.Tick and watchFile. Messages will be `true` if
+// triggered by watchFile, otherwise `false`
+func watchAndTick(ctx context.Context, fname string, interval time.Duration) (<-chan bool, error) {
+	ch := make(chan bool)
+
+	wch, err := watchFile(ctx, fname)
+	if err != nil {
+		return ch, err
+	}
+	tch := time.Tick(interval)
+
+	go func() {
+		ch <- false // Add an initial tick
+		for {
+			select {
+			case <-wch:
+				ch <- true
+			case <-tch:
+				ch <- false
 			}
+		}
+	}()
 
-			for _, cluster := range oldClusters {
-				CAFile := fmt.Sprintf("%v-ca.pem", cluster.Name)
-				CertFile := fmt.Sprintf("%v-cert.pem", cluster.Name)
-				KeyFile := fmt.Sprintf("%v-key.pem", cluster.Name)
+	return ch, nil
+}
 
-				decodedCA, err := base64.StdEncoding.DecodeString(cluster.MasterAuth.ClusterCaCertificate)
-				if err != nil {
-					log.Fatal(err)
-				}
-				decodedCert, err := base64.StdEncoding.DecodeString(cluster.MasterAuth.ClientCertificate)
-				if err != nil {
-					log.Fatal(err)
-				}
-				decodedKey, err := base64.StdEncoding.DecodeString(cluster.MasterAuth.ClientKey)
-				if err != nil {
-					log.Fatal(err)
-				}
+func watchFile(ctx context.Context, fname string) (<-chan struct{}, error) {
+	ch := make(chan struct{})
 
-				cfgMapCerts.Data[CAFile] = string(decodedCA)
-				cfgMapCerts.Data[CertFile] = string(decodedCert)
-				cfgMapCerts.Data[KeyFile] = string(decodedKey)
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return ch, errors.Wrap(err, "could not create fsnotify watcher")
+	}
 
-				for r, c := range GetRoles() {
-					scc := ScrapeConfig{
-						JobName: fmt.Sprintf("kubernetes_%v_%v", cluster.Name, r),
-						BasicAuth: BasicAuth{
-							Username: cluster.MasterAuth.Username,
-							Password: cluster.MasterAuth.Password,
-						},
-						KubernetesSDConfigs: []KubeSDConfig{
-							KubeSDConfig{
-								APIServers: []string{
-									"https://" + cluster.Endpoint,
-								},
-								Role:      r,
-								InCluster: false,
-								/*
-									This has to be the path where prometheus will expect to find the certs
-									At the moment, this is the only reason we have to pass in the CertificateStoreDir variable
-									Potentially, this could come from the prometheus deployment in kube (by looking up where we're mounting the certs)
-								*/
-								TLSConfig: TLSConfig{
-									CAFile:   fmt.Sprintf("%v/%v", cfg.CertificateStoreDir, CAFile),
-									CertFile: fmt.Sprintf("%v/%v", cfg.CertificateStoreDir, CertFile),
-									KeyFile:  fmt.Sprintf("%v/%v", cfg.CertificateStoreDir, KeyFile),
-								},
-							},
-						},
-						RelabelConfigs: c,
-					}
+	err = watcher.Add(fname)
+	if err != nil {
+		return ch, errors.Wrapf(err, "could not watch %v", fname)
+	}
 
-					newScrapeConfigs = append(newScrapeConfigs, scc)
-				}
-			}
+	debounce := func() {
+		log.V(4).Infof("Debouncing watch event for %v", debounceDuration)
+		ctx, cancel := context.WithTimeout(ctx, debounceDuration)
+		defer cancel()
 
-			cfgp := PrometheusConfig{}
-			cfgMap, err := c.ConfigMaps(string(namespace)).Get(cfg.ReadPrometheusConfigMap)
-			if err != nil {
-				fmt.Println(err)
-			}
-
-			err = yaml.Unmarshal([]byte(cfgMap.Data["prometheus.yml"]), &cfgp)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			for _, sc := range cfgp.ScrapeConfigs {
-				// I.e we're not a kube scrape config, and we were in the original file - lets leave this alone
-				if len(sc.KubernetesSDConfigs) == 0 {
-					newScrapeConfigs = append(newScrapeConfigs, sc)
-				}
-			}
-
-			cfgp.ScrapeConfigs = newScrapeConfigs
-
-			d, err := yaml.Marshal(&cfgp)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			// Prometheus
-			cfgMap = &kubeapi.ConfigMap{
-				ObjectMeta: kubeapi.ObjectMeta{
-					Name: cfg.WritePrometheusConfigMap,
-				},
-				Data: map[string]string{"prometheus.yml": string(d)},
-			}
-
-			// Certs
-			fmt.Println("Creating Cert map", cfgMapCerts)
-			time.Sleep(time.Second * 30) // Kubernetes Update Sync period
-			_, err = c.ConfigMaps(string(namespace)).Create(cfgMapCerts)
-			if err != nil {
-				fmt.Println(err)
-				_, erri := c.ConfigMaps(string(namespace)).Update(cfgMapCerts)
-				if erri != nil {
-					fmt.Println(err)
-					log.Fatal(erri)
-				}
-			}
-
-			_, err = c.ConfigMaps(string(namespace)).Create(cfgMap)
-			if err != nil {
-				fmt.Println(err)
-				_, erri := c.ConfigMaps(string(namespace)).Update(cfgMap)
-				if erri != nil {
-					fmt.Println(err)
-					log.Fatal(erri)
-				}
-			}
-
-			fmt.Println("Reloading Prometheus Config")
-			req, err := labels.NewRequirement("app", kubeselection.Equals, kubesets.NewString(cfg.PrometheusPodLabel))
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			fmt.Println("Creating Requirement: ", req.String())
-
-			ls := labels.NewSelector()
-			ls = ls.Add(*req)
-
-			lo := kubeapi.ListOptions{
-				LabelSelector: ls,
-			}
-
-			podList, err := c.Pods(string(namespace)).List(lo)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			for _, pod := range podList.Items {
-				if pod.Status.PodIP == "" {
-					// This prometheus instance hasnt started yet
-					continue
-				}
-				fmt.Println("Discovered Prometheus instance: ", pod.Status.PodIP)
-				resp, err := http.Post("http://"+pod.Status.PodIP+":9090/-/reload", "text/plain", bytes.NewBufferString(""))
-				if err != nil {
-					log.Fatal(err)
-				}
-				body, err := ioutil.ReadAll(resp.Body)
-				if err != nil {
-					log.Fatal(err)
-				}
-				fmt.Println(body)
-				resp.Body.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				log.V(4).Infof("Finished debounce")
+				return
+			case e := <-watcher.Events:
+				log.V(4).Infof("Event debounced: %v", e)
 			}
 		}
 	}
+
+	go func() {
+		for {
+			select {
+			case <-watcher.Events:
+				debounce()
+				ch <- struct{}{}
+			case err := <-watcher.Errors:
+				log.Errorf("Watcher failed: %v", err)
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
+func clusterListEqual(old, new []*container.Cluster) bool {
+	oldByName := map[string]bool{}
+	newByName := map[string]bool{}
+
+	for _, o := range old {
+		oldByName[o.Name] = true
+	}
+	for _, n := range new {
+		newByName[n.Name] = true
+	}
+
+	for _, o := range old {
+		if _, ok := newByName[o.Name]; !ok {
+			return false
+		}
+	}
+	for _, n := range new {
+		if _, ok := oldByName[n.Name]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func findClusters(ctx context.Context, project string) ([]*container.Cluster, error) {
+	client, err := google.DefaultClient(ctx, container.CloudPlatformScope, compute.ComputeReadonlyScope)
+	if err != nil {
+		return []*container.Cluster{}, errors.Wrap(err, "could not create google client")
+	}
+
+	zones, err := listZones(ctx, client, project)
+	if err != nil {
+		return []*container.Cluster{}, errors.Wrap(err, "could not list zones")
+	}
+
+	clusters := []*container.Cluster{}
+	for _, z := range zones {
+		zcs, err := listClusters(ctx, client, project, z)
+		if err != nil {
+			return []*container.Cluster{}, errors.Wrapf(err, "could not list clusters in %v/%v", project, z)
+		}
+
+		clusters = append(clusters, zcs...)
+	}
+	return clusters, nil
+}
+
+func listZones(ctx context.Context, client *http.Client, project string) ([]string, error) {
+	svc, err := compute.New(client)
+	if err != nil {
+		return []string{}, errors.Wrap(err, "could not create compute service")
+	}
+
+	res, err := svc.Zones.List(project).Context(ctx).Do()
+	if err != nil {
+		return []string{}, errors.Wrap(err, "could not list zones")
+	}
+
+	zones := make([]string, 0, len(res.Items))
+	for _, z := range res.Items {
+		zones = append(zones, z.Name)
+	}
+	return zones, nil
+}
+
+func listClusters(ctx context.Context, client *http.Client, project, zone string) ([]*container.Cluster, error) {
+	svc, err := container.New(client)
+	if err != nil {
+		return []*container.Cluster{}, errors.Wrap(err, "could not create container service")
+	}
+
+	res, err := svc.Projects.Zones.Clusters.List(project, zone).Context(ctx).Do()
+	if err != nil {
+		return []*container.Cluster{}, errors.Wrap(err, "could not list clusters")
+	}
+
+	return res.Clusters, nil
 }
