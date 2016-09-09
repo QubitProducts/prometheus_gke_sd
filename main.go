@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -232,6 +233,13 @@ func clusterToScrapeConfigs(certDir string, cluster *container.Cluster) []Scrape
 	if cluster.Endpoint == "" {
 		log.Errorf("No master endpoint defined for %v", cluster.Name)
 		return configs
+	}
+	if log.V(3) {
+		log.Infof("Cluster: %v Endpoint: %v", cluster.Name, "https://"+cluster.Endpoint)
+		cd, err := json.Marshal(cluster)
+		if err == nil {
+			log.Infof("Cluster json: %v", string(cd))
+		}
 	}
 
 	for r, c := range GetRoles() {
