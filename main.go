@@ -229,6 +229,10 @@ func generateConfig(inputConfigFilename, certDir string, clusters []*container.C
 
 func clusterToScrapeConfigs(certDir string, cluster *container.Cluster) []ScrapeConfig {
 	configs := []ScrapeConfig{}
+	if cluster.Endpoint == "" {
+		log.Errorf("No master endpoint defined for %v", cluster.Name)
+		return configs
+	}
 
 	for r, c := range GetRoles() {
 		configs = append(configs, ScrapeConfig{
