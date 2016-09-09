@@ -1,5 +1,0 @@
-read_prometheus_config_map: "prometheus"
-write_prometheus_config_map: "prometheus-dynamic"
-certificate_config_map: "gke-discoverer-certs"
-gcp_project: "{{ gce_project}}"
-poll_time: 60 # dont set this less than 45 or so, the kubernetes inbuilt sync period is 30s

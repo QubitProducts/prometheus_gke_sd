@@ -1,29 +1,39 @@
 hash: 2c079281add9f99818de5131b2d843855762e79a31e76adfd43ffce3923fddf6
-updated: 2016-08-31T15:47:15.006552263+01:00
+updated: 2016-09-09T08:06:29.854666877+01:00
 imports:
 - name: cloud.google.com/go
-  version: 0be5b78e8f89c61a4877d5fccf2818cb16b1f0e4
+  version: c033d081db673449a5095963f987693c186fcf34
   subpackages:
   - compute/metadata
   - internal
+- name: github.com/fsnotify/fsnotify
+  version: f12c6236fe7b5cf6bcf30e5935d08cb079d78334
+- name: github.com/golang/glog
+  version: 23def4e6c14b4da8ac2ed8007337bc5eb5007998
 - name: github.com/golang/protobuf
   version: 1f49d83d9aa00e6ce4fc8258c71cc7786aec968a
   subpackages:
   - proto
+- name: github.com/pkg/errors
+  version: 17b591df37844cde689f4d5813e5cea0927d8dd2
 - name: golang.org/x/net
-  version: 9bc2a3340c92c17a20edcd0080e93851ed58f5d5
+  version: 9313baa13d9262e49d07b20ed57dceafcd7240cc
   subpackages:
   - context
   - context/ctxhttp
 - name: golang.org/x/oauth2
-  version: 4d549c893be7d4011bab739cc585d091a7188d27
+  version: 3c3a985cb79f52a3190fbc056984415ca6763d01
   subpackages:
   - google
   - internal
   - jws
   - jwt
+- name: golang.org/x/sys
+  version: 30de6d19a3bd89a5f38ae4028e23aaa5582648af
+  subpackages:
+  - unix
 - name: google.golang.org/api
-  version: a6f4bdf45d84ef23b113bfa75300937092dd442b
+  version: 2c5cc087881144c2948875dcd739186d8f462c82
   subpackages:
   - compute/v1
   - container/v1
