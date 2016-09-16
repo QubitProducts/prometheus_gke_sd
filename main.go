@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -385,6 +384,8 @@ func findClusters(ctx context.Context, project string) ([]*container.Cluster, er
 		for _, c := range zcs {
 			if c.Endpoint != "" {
 				clusters = append(clusters, c)
+			} else {
+				log.V(2).Infof("Could not get endpoint for cluster: %v", c.Name)
 			}
 		}
 	}
