@@ -1,8 +1,8 @@
 hash: 2c079281add9f99818de5131b2d843855762e79a31e76adfd43ffce3923fddf6
-updated: 2016-09-09T08:06:29.854666877+01:00
+updated: 2016-09-16T14:46:07.386102986+01:00
 imports:
 - name: cloud.google.com/go
-  version: c033d081db673449a5095963f987693c186fcf34
+  version: 0be5b78e8f89c61a4877d5fccf2818cb16b1f0e4
   subpackages:
   - compute/metadata
   - internal
@@ -15,25 +15,21 @@ imports:
   subpackages:
   - proto
 - name: github.com/pkg/errors
-  version: 17b591df37844cde689f4d5813e5cea0927d8dd2
+  version: a887431f7f6ef7687b556dbf718d9f351d4858a0
 - name: golang.org/x/net
-  version: 9313baa13d9262e49d07b20ed57dceafcd7240cc
+  version: 9bc2a3340c92c17a20edcd0080e93851ed58f5d5
   subpackages:
   - context
   - context/ctxhttp
 - name: golang.org/x/oauth2
-  version: 3c3a985cb79f52a3190fbc056984415ca6763d01
+  version: 4d549c893be7d4011bab739cc585d091a7188d27
   subpackages:
   - google
   - internal
   - jws
   - jwt
-- name: golang.org/x/sys
-  version: 30de6d19a3bd89a5f38ae4028e23aaa5582648af
-  subpackages:
-  - unix
 - name: google.golang.org/api
-  version: 2c5cc087881144c2948875dcd739186d8f462c82
+  version: a6f4bdf45d84ef23b113bfa75300937092dd442b
   subpackages:
   - compute/v1
   - container/v1
