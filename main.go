@@ -394,8 +394,11 @@ func findClusters(ctx context.Context, project string) ([]*container.Cluster, er
 		if err != nil {
 			return []*container.Cluster{}, errors.Wrapf(err, "could not list clusters in %v/%v", project, z)
 		}
-
-		clusters = append(clusters, zcs...)
+		for _, c := range zcs {
+			if c.Endpoint != "" {
+				clusters = append(clusters, c)
+			}
+		}
 	}
 	return clusters, nil
 }
