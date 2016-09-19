@@ -11,6 +11,7 @@ import (
 
 	log "github.com/golang/glog"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/net/context"
 	"golang.org/x/net/context/ctxhttp"
 
@@ -33,6 +34,19 @@ var (
 
 	gcpProject   = ""
 	pollInterval = time.Second * 10
+
+	clusterCount = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "gkesd_clusters",
+		Help: "Number of clusters discovered",
+	})
+	syncDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name: "gkesd_sync_duration_seconds",
+		Help: "Duration of the GKE api to prometheus config sync operation",
+	})
+	syncResult = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "gkesd_sync_count",
+		Help: "Count of the GKE api to prometheus config sync operation, labeled by result",
+	}, []string{"result"})
 )
 
 const (
@@ -53,6 +67,10 @@ func init() {
 
 	flag.StringVar(&gcpProject, "gcp.project", "", "GCP project to discover clusters in")
 	flag.DurationVar(&pollInterval, "poll-interval", pollInterval, "Interval to poll for new GKE clusters at")
+
+	prometheus.MustRegister(clusterCount)
+	prometheus.MustRegister(syncDuration)
+	prometheus.MustRegister(syncResult)
 }
 
 type PrometheusConfig struct {
@@ -102,6 +120,9 @@ func main() {
 	currentClusters := []*container.Cluster{}
 
 	loop := func(force bool) error {
+		started := time.Now()
+		defer syncDuration.Observe(float64(time.Now().Sub(started)) / float64(time.Second))
+
 		ctx, cancel := context.WithTimeout(ctx, pollInterval)
 		defer cancel()
 
@@ -126,6 +147,7 @@ func main() {
 				log.Info(c.Name)
 			}
 		}
+		clusterCount.Set(float64(len(newClusters)))
 
 		err = writeClusterCerts(certOutDir, newClusters)
 		if err != nil {
@@ -157,6 +179,9 @@ func main() {
 		err := loop(force)
 		if err != nil {
 			log.Errorf("Config check/update loop failed: %v", err)
+			syncResult.WithLabelValues("failure").Inc()
+		} else {
+			syncResult.WithLabelValues("success").Inc()
 		}
 	}
 }
