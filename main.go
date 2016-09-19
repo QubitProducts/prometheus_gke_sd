@@ -275,7 +275,7 @@ func clusterToScrapeConfigs(certDir string, cluster *container.Cluster) []Scrape
 				Password: cluster.MasterAuth.Password,
 			},
 			KubernetesSDConfigs: []KubeSDConfig{
-				KubeSDConfig{
+				{
 					APIServers: []string{
 						"https://" + cluster.Endpoint,
 					},

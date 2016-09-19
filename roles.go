@@ -32,13 +32,13 @@ func GetRoles() map[string][]RelabelConfig {
 				         An Elephant never forgets.
 	*/
 	return map[string][]RelabelConfig{
-		"apiserver": []RelabelConfig{},
-		"node": []RelabelConfig{
-			RelabelConfig{
+		"apiserver": {},
+		"node": {
+			{
 				Action: "labelmap",
 				Regex:  "__meta_kubernetes_node_label_(.+)",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__address__",
 				},
@@ -48,15 +48,15 @@ func GetRoles() map[string][]RelabelConfig {
 				Replacement: "$1:10255",
 			},
 		},
-		"endpoint": []RelabelConfig{
-			RelabelConfig{
+		"endpoint": {
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_annotation_prometheus_io_scrape",
 				},
 				Action: "keep",
 				Regex:  "true",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_annotation_prometheus_io_scheme",
 				},
@@ -64,7 +64,7 @@ func GetRoles() map[string][]RelabelConfig {
 				Regex:       "(https?)",
 				TargetLabel: "__scheme__",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_annotation_prometheus_io_path",
 				},
@@ -72,7 +72,7 @@ func GetRoles() map[string][]RelabelConfig {
 				Regex:       "(.+)",
 				TargetLabel: "__metrics_path__",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__address__",
 					"__meta_kubernetes_service_annotation_prometheus_io_port",
@@ -82,18 +82,18 @@ func GetRoles() map[string][]RelabelConfig {
 				TargetLabel: "__address__",
 				Replacement: "$1:$2",
 			},
-			RelabelConfig{
+			{
 				Action: "labelmap",
 				Regex:  "__meta_kubernetes_endpoint_label_(.+)",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_namespace",
 				},
 				Action:      "replace",
 				TargetLabel: "kubernetes_namespace",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_name",
 				},
@@ -101,15 +101,15 @@ func GetRoles() map[string][]RelabelConfig {
 				TargetLabel: "kubernetes_name",
 			},
 		},
-		"service": []RelabelConfig{
-			RelabelConfig{
+		"service": {
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_annotation_prometheus_io_probe",
 				},
 				Action: "keep",
 				Regex:  "true",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__address__",
 				},
@@ -117,7 +117,7 @@ func GetRoles() map[string][]RelabelConfig {
 				TargetLabel: "__param_target",
 				Replacement: "${1}",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__param_target",
 				},
@@ -125,38 +125,38 @@ func GetRoles() map[string][]RelabelConfig {
 				TargetLabel: "instance",
 				Replacement: "${1}",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{},
 				Regex:        ".*",
 				TargetLabel:  "__address",
 				Replacement:  "blackbox:9115",
 			},
-			RelabelConfig{
+			{
 				Action: "labelmap",
 				Regex:  "__meta_kubernetes_service_label_(.+)",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_namespace",
 				},
 				TargetLabel: "kubernetes_namespace",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_name",
 				},
 				TargetLabel: "kubernetes_name",
 			},
 		},
-		"pod": []RelabelConfig{
-			RelabelConfig{
+		"pod": {
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_pod_annotation_prometheus_io_scrape",
 				},
 				Action: "keep",
 				Regex:  "true",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_pod_annotation_prometheus_io_path",
 				},
@@ -164,7 +164,7 @@ func GetRoles() map[string][]RelabelConfig {
 				Regex:       "(.+)",
 				TargetLabel: "__metrics_path__",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__address__",
 					"__meta_kubernetes_pod_annotation_prometheus_io_port",
@@ -174,18 +174,18 @@ func GetRoles() map[string][]RelabelConfig {
 				Replacement: "${1}:${2}",
 				TargetLabel: "__address__",
 			},
-			RelabelConfig{
+			{
 				Action: "labelmap",
 				Regex:  "__meta_kubernetes_pod_label_(.+)",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_pod_namespace",
 				},
 				Action:      "replace",
 				TargetLabel: "kubernetes_namespace",
 			},
-			RelabelConfig{
+			{
 				SourceLabels: []string{
 					"__meta_kubernetes_pod_name",
 				},
