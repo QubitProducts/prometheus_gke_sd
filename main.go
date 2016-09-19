@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"time"
 
 	log "github.com/golang/glog"
@@ -106,7 +107,8 @@ type ScrapeConfig struct {
 func main() {
 	flag.Parse()
 	if gcpProject == "" {
-		log.Fatal("Please supply a GCP Project")
+		log.Error("Please supply a GCP Project")
+		os.Exit(1)
 	}
 
 	ctx := context.Background()
