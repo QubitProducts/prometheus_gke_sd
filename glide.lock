@@ -1,11 +1,15 @@
 hash: 2c079281add9f99818de5131b2d843855762e79a31e76adfd43ffce3923fddf6
-updated: 2016-09-09T08:06:29.854666877+01:00
+updated: 2016-09-19T20:35:53.43054556+01:00
 imports:
 - name: cloud.google.com/go
-  version: c033d081db673449a5095963f987693c186fcf34
+  version: 640c4c9104e6922cdee81ce375925f45f804f401
   subpackages:
   - compute/metadata
   - internal
+- name: github.com/beorn7/perks
+  version: 4c0e84591b9aa9e6dcfdf3e020114cd81f89d5f9
+  subpackages:
+  - quantile
 - name: github.com/fsnotify/fsnotify
   version: f12c6236fe7b5cf6bcf30e5935d08cb079d78334
 - name: github.com/golang/glog
@@ -14,10 +18,30 @@ imports:
   version: 1f49d83d9aa00e6ce4fc8258c71cc7786aec968a
   subpackages:
   - proto
+- name: github.com/matttproud/golang_protobuf_extensions
+  version: c12348ce28de40eed0136aa2b644d0ee0650e56c
+  subpackages:
+  - pbutil
 - name: github.com/pkg/errors
-  version: 17b591df37844cde689f4d5813e5cea0927d8dd2
+  version: a887431f7f6ef7687b556dbf718d9f351d4858a0
+- name: github.com/prometheus/client_golang
+  version: 5636dc67ae776adf5590da7349e70fbb9559972d
+  subpackages:
+  - prometheus
+- name: github.com/prometheus/client_model
+  version: fa8ad6fec33561be4280a8f0514318c79d7f6cb6
+  subpackages:
+  - go
+- name: github.com/prometheus/common
+  version: 9a94032291f2192936512bab367bc45e77990d6a
+  subpackages:
+  - expfmt
+  - model
+  - internal/bitbucket.org/ww/goautoneg
+- name: github.com/prometheus/procfs
+  version: abf152e5f3e97f2fafac028d2cc06c1feb87ffa5
 - name: golang.org/x/net
-  version: 9313baa13d9262e49d07b20ed57dceafcd7240cc
+  version: 71a035914f99bb58fe82eac0f1289f10963d876c
   subpackages:
   - context
   - context/ctxhttp
@@ -29,11 +53,11 @@ imports:
   - jws
   - jwt
 - name: golang.org/x/sys
-  version: 30de6d19a3bd89a5f38ae4028e23aaa5582648af
+  version: 8f0908ab3b2457e2e15403d3697c9ef5cb4b57a9
   subpackages:
   - unix
 - name: google.golang.org/api
-  version: 2c5cc087881144c2948875dcd739186d8f462c82
+  version: a69f0f19d246419bb931b0ac8f4f8d3f3e6d4feb
   subpackages:
   - compute/v1
   - container/v1
@@ -41,7 +65,7 @@ imports:
   - googleapi
   - googleapi/internal/uritemplates
 - name: google.golang.org/appengine
-  version: 4f7eeb5305a4ba1966344836ba4af9996b7b4e05
+  version: 78199dcb0669fc381c22e919e1e97eba879e8f60
   subpackages:
   - urlfetch
   - internal
@@ -53,5 +77,5 @@ imports:
   - internal/log
   - internal/remote_api
 - name: gopkg.in/yaml.v2
-  version: e4d366fc3c7938e2958e662b4258c7a89e1f0e3e
+  version: 31c299268d302dd0aa9a0dcf765a3d58971ac83f
 testImports: []
