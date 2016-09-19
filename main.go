@@ -36,6 +36,8 @@ var (
 	gcpProject   = ""
 	pollInterval = time.Second * 10
 
+	metricsAddr = ":8080"
+
 	clusterCount = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "gkesd_clusters",
 		Help: "Number of clusters discovered",
@@ -65,9 +67,9 @@ func init() {
 
 	flag.StringVar(&certOutDir, "prometheus.cert.output-path", certOutDir, "Directory to write GKE certificates to")
 	flag.StringVar(&certReferenceDir, "prometheus.cert.reference-path", certReferenceDir, "Path in prometheus config to reference GKE certificates")
-
 	flag.StringVar(&gcpProject, "gcp.project", "", "GCP project to discover clusters in")
 	flag.DurationVar(&pollInterval, "poll-interval", pollInterval, "Interval to poll for new GKE clusters at")
+	flag.StringVar(&metricsAddr, "metrics.addr", metricsAddr, "Address to expose metrics endpoint on")
 
 	prometheus.MustRegister(clusterCount)
 	prometheus.MustRegister(syncDuration)
@@ -112,6 +114,15 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	http.Handle("/metrics", prometheus.Handler())
+	go func() {
+		err := http.ListenAndServe(metricsAddr, nil)
+		if err != nil {
+			log.Fatalf("Could not start metrics server: %v", err)
+			os.Exit(1)
+		}
+	}()
 
 	log.V(2).Infof("Checking config every %v or on changes to %v", pollInterval, configInputFile)
 	updateChan, err := watchAndTick(ctx, configInputFile, pollInterval)
