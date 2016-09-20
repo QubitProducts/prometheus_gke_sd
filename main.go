@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"time"
 
 	log "github.com/golang/glog"
 	"github.com/pkg/errors"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/net/context"
 	"golang.org/x/net/context/ctxhttp"
 
@@ -32,6 +34,21 @@ var (
 
 	gcpProject   = ""
 	pollInterval = time.Second * 10
+
+	metricsAddr = ":8080"
+
+	clusterCount = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "gkesd_clusters",
+		Help: "Number of clusters discovered",
+	})
+	syncDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name: "gkesd_sync_duration_seconds",
+		Help: "Duration of the GKE api to prometheus config sync operation",
+	})
+	syncResult = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "gkesd_sync_count",
+		Help: "Count of the GKE api to prometheus config sync operation, labeled by result",
+	}, []string{"result"})
 )
 
 const (
@@ -49,9 +66,13 @@ func init() {
 
 	flag.StringVar(&certOutDir, "prometheus.cert.output-path", certOutDir, "Directory to write GKE certificates to")
 	flag.StringVar(&certReferenceDir, "prometheus.cert.reference-path", certReferenceDir, "Path in prometheus config to reference GKE certificates")
-
 	flag.StringVar(&gcpProject, "gcp.project", "", "GCP project to discover clusters in")
 	flag.DurationVar(&pollInterval, "poll-interval", pollInterval, "Interval to poll for new GKE clusters at")
+	flag.StringVar(&metricsAddr, "metrics.addr", metricsAddr, "Address to expose metrics endpoint on")
+
+	prometheus.MustRegister(clusterCount)
+	prometheus.MustRegister(syncDuration)
+	prometheus.MustRegister(syncResult)
 }
 
 type PrometheusConfig struct {
@@ -87,10 +108,20 @@ type ScrapeConfig struct {
 func main() {
 	flag.Parse()
 	if gcpProject == "" {
-		log.Fatal("Please supply a GCP Project")
+		log.Error("Please supply a GCP Project")
+		os.Exit(1)
 	}
 
 	ctx := context.Background()
+
+	http.Handle("/metrics", prometheus.Handler())
+	go func() {
+		err := http.ListenAndServe(metricsAddr, nil)
+		if err != nil {
+			log.Fatalf("Could not start metrics server: %v", err)
+			os.Exit(1)
+		}
+	}()
 
 	log.V(2).Infof("Checking config every %v or on changes to %v", pollInterval, configInputFile)
 	updateChan, err := watchAndTick(ctx, configInputFile, pollInterval)
@@ -101,6 +132,9 @@ func main() {
 	currentClusters := []*container.Cluster{}
 
 	loop := func(force bool) error {
+		started := time.Now()
+		defer syncDuration.Observe(float64(time.Now().Sub(started)) / float64(time.Second))
+
 		ctx, cancel := context.WithTimeout(ctx, pollInterval)
 		defer cancel()
 
@@ -125,6 +159,7 @@ func main() {
 				log.Info(c.Name)
 			}
 		}
+		clusterCount.Set(float64(len(newClusters)))
 
 		err = writeClusterCerts(certOutDir, newClusters)
 		if err != nil {
@@ -156,6 +191,9 @@ func main() {
 		err := loop(force)
 		if err != nil {
 			log.Errorf("Config check/update loop failed: %v", err)
+			syncResult.WithLabelValues("failure").Inc()
+		} else {
+			syncResult.WithLabelValues("success").Inc()
 		}
 	}
 }
@@ -237,7 +275,7 @@ func clusterToScrapeConfigs(certDir string, cluster *container.Cluster) []Scrape
 				Password: cluster.MasterAuth.Password,
 			},
 			KubernetesSDConfigs: []KubeSDConfig{
-				KubeSDConfig{
+				{
 					APIServers: []string{
 						"https://" + cluster.Endpoint,
 					},
