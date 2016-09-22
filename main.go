@@ -71,7 +71,7 @@ func init() {
 	flag.StringVar(&gcpProject, "gcp.project", "", "GCP project to discover clusters in")
 	flag.DurationVar(&pollInterval, "poll-interval", pollInterval, "Interval to poll for new GKE clusters at")
 
-	flag.DurationVar(&retryInterval, "gke.retry-interval", retryInterval, "The retry interval for the prometheus kubenetes discoverer")
+	flag.DurationVar(&retryInterval, "gke.retry-interval", retryInterval, "The retry interval for the prometheus kubernetes discoverer")
 
 	flag.StringVar(&metricsAddr, "metrics.addr", metricsAddr, "Address to expose metrics endpoint on")
 
