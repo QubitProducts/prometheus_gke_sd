@@ -35,6 +35,8 @@ var (
 	gcpProject   = ""
 	pollInterval = time.Second * 10
 
+	retryInterval = time.Second * 30
+
 	metricsAddr = ":8080"
 
 	clusterCount = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -68,6 +70,9 @@ func init() {
 	flag.StringVar(&certReferenceDir, "prometheus.cert.reference-path", certReferenceDir, "Path in prometheus config to reference GKE certificates")
 	flag.StringVar(&gcpProject, "gcp.project", "", "GCP project to discover clusters in")
 	flag.DurationVar(&pollInterval, "poll-interval", pollInterval, "Interval to poll for new GKE clusters at")
+
+	flag.DurationVar(&retryInterval, "gke.retry-interval", retryInterval, "The retry interval for the prometheus kubernetes discoverer")
+
 	flag.StringVar(&metricsAddr, "metrics.addr", metricsAddr, "Address to expose metrics endpoint on")
 
 	prometheus.MustRegister(clusterCount)
@@ -91,17 +96,18 @@ type BasicAuth struct {
 }
 
 type KubeSDConfig struct {
-	APIServers []string  `yaml:"api_servers"`
-	Role       string    `yaml:"role"`
-	InCluster  bool      `yaml:"in_cluster,omitempty"`
-	TLSConfig  TLSConfig `yaml:"tls_config,omitempty"`
+	APIServers    []string  `yaml:"api_servers"`
+	Role          string    `yaml:"role"`
+	InCluster     bool      `yaml:"in_cluster,omitempty"`
+	TLSConfig     TLSConfig `yaml:"tls_config,omitempty"`
+	RetryInterval string    `yaml:"retry_interval,omitempty"`
 }
 
 type ScrapeConfig struct {
-	JobName             string          `yaml:"job_name"`
-	KubernetesSDConfigs []KubeSDConfig  `yaml:"kubernetes_sd_configs,omitempty"`
-	RelabelConfigs      []RelabelConfig `yaml:"relabel_configs,omitempty"`
-	BasicAuth           `yaml:"basic_auth,omitempty"`
+	JobName             string                 `yaml:"job_name"`
+	KubernetesSDConfigs []KubeSDConfig         `yaml:"kubernetes_sd_configs,omitempty"`
+	RelabelConfigs      []RelabelConfig        `yaml:"relabel_configs,omitempty"`
+	BasicAuth           BasicAuth              `yaml:"basic_auth,omitempty"`
 	XXX                 map[string]interface{} `yaml:",inline"`
 }
 
@@ -279,8 +285,9 @@ func clusterToScrapeConfigs(certDir string, cluster *container.Cluster) []Scrape
 					APIServers: []string{
 						"https://" + cluster.Endpoint,
 					},
-					Role:      r,
-					InCluster: false,
+					Role:          r,
+					InCluster:     false,
+					RetryInterval: retryInterval.String(),
 					TLSConfig: TLSConfig{
 						CAFile:   fmt.Sprintf("%v/%v-ca.pem", certDir, cluster.Name),
 						CertFile: fmt.Sprintf("%v/%v-cert.pem", certDir, cluster.Name),
