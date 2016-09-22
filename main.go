@@ -35,6 +35,8 @@ var (
 	gcpProject   = ""
 	pollInterval = time.Second * 10
 
+	retryInterval = time.Second * 30
+
 	metricsAddr = ":8080"
 
 	clusterCount = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -68,6 +70,9 @@ func init() {
 	flag.StringVar(&certReferenceDir, "prometheus.cert.reference-path", certReferenceDir, "Path in prometheus config to reference GKE certificates")
 	flag.StringVar(&gcpProject, "gcp.project", "", "GCP project to discover clusters in")
 	flag.DurationVar(&pollInterval, "poll-interval", pollInterval, "Interval to poll for new GKE clusters at")
+
+	flag.DurationVar(&retryInterval, "gke.retry-interval", retryInterval, "The retry interval for the prometheus kubenetes discoverer")
+
 	flag.StringVar(&metricsAddr, "metrics.addr", metricsAddr, "Address to expose metrics endpoint on")
 
 	prometheus.MustRegister(clusterCount)
@@ -98,10 +103,11 @@ type KubeSDConfig struct {
 }
 
 type ScrapeConfig struct {
-	JobName             string          `yaml:"job_name"`
-	KubernetesSDConfigs []KubeSDConfig  `yaml:"kubernetes_sd_configs,omitempty"`
-	RelabelConfigs      []RelabelConfig `yaml:"relabel_configs,omitempty"`
-	BasicAuth           `yaml:"basic_auth,omitempty"`
+	JobName             string                 `yaml:"job_name"`
+	KubernetesSDConfigs []KubeSDConfig         `yaml:"kubernetes_sd_configs,omitempty"`
+	RelabelConfigs      []RelabelConfig        `yaml:"relabel_configs,omitempty"`
+	BasicAuth           BasicAuth              `yaml:"basic_auth,omitempty"`
+	RetryInterval       string                 `yaml:"retry_interval,omitempty"`
 	XXX                 map[string]interface{} `yaml:",inline"`
 }
 
@@ -274,6 +280,7 @@ func clusterToScrapeConfigs(certDir string, cluster *container.Cluster) []Scrape
 				Username: cluster.MasterAuth.Username,
 				Password: cluster.MasterAuth.Password,
 			},
+			RetryInterval: retryInterval.String(),
 			KubernetesSDConfigs: []KubeSDConfig{
 				{
 					APIServers: []string{
