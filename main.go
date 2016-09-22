@@ -96,10 +96,11 @@ type BasicAuth struct {
 }
 
 type KubeSDConfig struct {
-	APIServers []string  `yaml:"api_servers"`
-	Role       string    `yaml:"role"`
-	InCluster  bool      `yaml:"in_cluster,omitempty"`
-	TLSConfig  TLSConfig `yaml:"tls_config,omitempty"`
+	APIServers    []string  `yaml:"api_servers"`
+	Role          string    `yaml:"role"`
+	InCluster     bool      `yaml:"in_cluster,omitempty"`
+	TLSConfig     TLSConfig `yaml:"tls_config,omitempty"`
+	RetryInterval string    `yaml:"retry_interval,omitempty"`
 }
 
 type ScrapeConfig struct {
@@ -107,7 +108,6 @@ type ScrapeConfig struct {
 	KubernetesSDConfigs []KubeSDConfig         `yaml:"kubernetes_sd_configs,omitempty"`
 	RelabelConfigs      []RelabelConfig        `yaml:"relabel_configs,omitempty"`
 	BasicAuth           BasicAuth              `yaml:"basic_auth,omitempty"`
-	RetryInterval       string                 `yaml:"retry_interval,omitempty"`
 	XXX                 map[string]interface{} `yaml:",inline"`
 }
 
@@ -280,14 +280,14 @@ func clusterToScrapeConfigs(certDir string, cluster *container.Cluster) []Scrape
 				Username: cluster.MasterAuth.Username,
 				Password: cluster.MasterAuth.Password,
 			},
-			RetryInterval: retryInterval.String(),
 			KubernetesSDConfigs: []KubeSDConfig{
 				{
 					APIServers: []string{
 						"https://" + cluster.Endpoint,
 					},
-					Role:      r,
-					InCluster: false,
+					Role:          r,
+					InCluster:     false,
+					RetryInterval: retryInterval.String(),
 					TLSConfig: TLSConfig{
 						CAFile:   fmt.Sprintf("%v/%v-ca.pem", certDir, cluster.Name),
 						CertFile: fmt.Sprintf("%v/%v-cert.pem", certDir, cluster.Name),
