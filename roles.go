@@ -35,10 +35,6 @@ func GetRoles() map[string][]RelabelConfig {
 		"apiserver": {},
 		"node": {
 			{
-				Action: "labelmap",
-				Regex:  "__meta_kubernetes_node_label_(.+)",
-			},
-			{
 				SourceLabels: []string{
 					"__address__",
 				},
@@ -81,10 +77,6 @@ func GetRoles() map[string][]RelabelConfig {
 				Regex:       "(.+)(?::\\d+);(\\d+)",
 				TargetLabel: "__address__",
 				Replacement: "$1:$2",
-			},
-			{
-				Action: "labelmap",
-				Regex:  "__meta_kubernetes_endpoint_label_(.+)",
 			},
 			{
 				SourceLabels: []string{
@@ -132,10 +124,6 @@ func GetRoles() map[string][]RelabelConfig {
 				Replacement:  "blackbox:9115",
 			},
 			{
-				Action: "labelmap",
-				Regex:  "__meta_kubernetes_service_label_(.+)",
-			},
-			{
 				SourceLabels: []string{
 					"__meta_kubernetes_service_namespace",
 				},
@@ -173,10 +161,6 @@ func GetRoles() map[string][]RelabelConfig {
 				Regex:       "(.+):(?:\\d+);(\\d+)",
 				Replacement: "${1}:${2}",
 				TargetLabel: "__address__",
-			},
-			{
-				Action: "labelmap",
-				Regex:  "__meta_kubernetes_pod_label_(.+)",
 			},
 			{
 				SourceLabels: []string{
