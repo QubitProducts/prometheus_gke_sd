@@ -32,10 +32,10 @@ var (
 	certOutDir       = "/etc/gke-certs"
 	certReferenceDir = "/etc/gke-certs"
 
-	gcpProject   = ""
-	pollInterval = time.Second * 10
+	gcpProject = ""
 
-	retryInterval = time.Second * 30
+	pollInterval  = time.Second * 20
+	retryInterval = time.Second * 40
 
 	metricsAddr = ":8080"
 
@@ -420,8 +420,14 @@ func findClusters(ctx context.Context, project string) ([]*container.Cluster, er
 		return []*container.Cluster{}, errors.Wrap(err, "could not list zones")
 	}
 
+	// If the account for your service discoverer is in a project,
+	// and you permission to other projects, then you'll quickly run into rate limit problems
+	// here we'll space out our queries to try and avoid that problem.
+	secondsBetweenQueries := (int(pollInterval) / len(zones)) - 1
+
 	clusters := []*container.Cluster{}
 	for _, z := range zones {
+		time.Sleep(time.Second * time.Duration(secondsBetweenQueries))
 		zcs, err := listClusters(ctx, client, project, z)
 		if err != nil {
 			return []*container.Cluster{}, errors.Wrapf(err, "could not list clusters in %v/%v", project, z)
